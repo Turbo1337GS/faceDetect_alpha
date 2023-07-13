@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        /* CSS styles for the page layout and appearance */
+        body {
+            background-color: #2b2b2b;
+            color: #fff;
+            display: flex;
+            flex-direction: row;
+            align-items: flex-start;
+            justify-content: flex-start;
+            padding: 20px;
+        }
+
+        #container {
+            position: relative;
+            width: 100%;
+            height: 0;
+            padding-bottom: 75%;
+            max-width: 640px;
+            max-height: 480px;
+            margin-right: 20px;
+        }
+
+        #videoCanvas, #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            max-width: 640px;
+            max-height: 480px;
+            border: 1px solid white;
+        }
+
+        #message {
+            color: white;
+            font-size: 24px;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        #controls {
+            display: flex;
+            flex-direction: column;
+            margin-top: 20px;
+        }
+
+        .control {
+            margin-bottom: 10px;
+        }
+
+        .control label {
+            color: white;
+            font-size: 16px;
+        }
+
+        .control input {
+            margin-top: 5px;
+        }
+
+        /* Dark theme styles */
+        body.dark {
+            background-color: #1c1c1c;
+            color: #ddd;
+        }
+
+        body.dark .control label {
+            color: #ddd;
+        }
+
+        body.dark #videoCanvas, body.dark #overlay {
+            border: 1px solid #ddd;
+        }
+
+        body.dark #message {
+            color: #ddd;
+        }
+
+        body.dark .control input[type="checkbox"] {
+            border: 1px solid #ddd;
+            background-color: #1c1c1c;
+            color: #ddd;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/blazeface"></script>
+</head>
+<body>
+    <!-- Video canvas and overlay container -->
+    <div id="container">
+        <canvas id="videoCanvas"></canvas>
+        <canvas id="overlay"></canvas>
+    </div>
+    <!-- Controls section -->
+    <div id="controls">
+        <!-- Show landmarks checkbox -->
+        <div class="control">
+            <label for="showLandmarksCheckbox">
+                <input type="checkbox" id="showLandmarksCheckbox" checked>
+                Show Landmarks
+            </label>
+            <div id="landmarksOptions" style="display: none;">
+                <label for="landmarksSize">Landmarks Size:</label>
+                <input type="range" id="landmarksSize" min="1" max="10" value="2">
+            </div>
+        </div>
+        <!-- Show probability checkbox -->
+        <div class="control">
+            <label for="showProbabilityCheckbox">
+                <input type="checkbox" id="showProbabilityCheckbox" checked>
+                Show Detection Probability
+            </label>
+        </div>
+        <!-- Show position checkbox -->
+        <div class="control">
+            <label for="showPositionCheckbox">
+                <input type="checkbox" id="showPositionCheckbox" checked>
+                Show Face Position
+            </label>
+        </div>
+        <!-- Color by confidence checkbox -->
+        <div class="control">
+            <label for="colorByConfidenceCheckbox">
+                <input type="checkbox" id="colorByConfidenceCheckbox">
+                Change Color Based on Confidence
+            </label>
+        </div>
+    </div>
+    <!-- Message display -->
+    <div id="message"></div>
+    <script>
+        // Get the video canvas, overlay canvas, and message element
+        const videoCanvas = document.getElementById('videoCanvas');
+        videoCanvas.width = videoCanvas.offsetWidth;
+        videoCanvas.height = videoCanvas.offsetHeight;
+        const overlay = document.getElementById('overlay');
+        overlay.width = overlay.offsetWidth;
+        overlay.height = overlay.offsetHeight;
+        const message = document.getElementById('message');
+
+        // Get the 2D rendering contexts for video and overlay canvases
+        const videoCtx = videoCanvas.getContext('2d');
+        const overlayCtx = overlay.getContext('2d');
+
+        // Set the line width for face rectangles
+        const lineWidth = 5;
+
+        let model;
+        let showLandmarks = true;
+        let showProbability = true;
+        let showPosition = true;
+        let colorByConfidence = false;
+
+        // Initialize the camera
+        const initializeCamera = async () => {
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: { width: videoCanvas.width, height: videoCanvas.height } });
+                return new Promise(resolve => {
+                    const video = document.createElement('video');
+                    video.srcObject = stream;
+                    video.onloadedmetadata = () => {
+                        video.play();
+                        resolve(video);
+                    };
+                });
+            }
+
+            throw new Error('Camera is not supported in this browser.');
+        };
+
+        // Detect faces in the video frames
+        const detectFaces = async (video) => {
+            videoCtx.drawImage(video, 0, 0, videoCanvas.width, videoCanvas.height);
+
+            const returnTensors = false;
+            const predictions = await model.estimateFaces(video, returnTensors);
+
+            overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+
+            if (predictions.length > 0) {
+                message.innerText = `Detected Faces: ${predictions.length}`;
+                for (let i = 0; i < predictions.length; i++) {
+                    const start = predictions[i].topLeft;
+                    const end = predictions[i].bottomRight;
+                    const size = [end[0] - start[0], end[1] - start[1]];
+                    const probability = predictions[i].probability;
+                    const landmarks = predictions[i].landmarks;
+
+                    if (colorByConfidence) {
+                        const red = Math.round(probability[0] * 255);
+                        const green = Math.round((1 - probability[0]) * 255);
+                        overlayCtx.strokeStyle = `rgb(${red}, ${green}, 0)`;
+                    } else {
+                        overlayCtx.strokeStyle = 'white';
+                    }
+
+                    overlayCtx.lineWidth = lineWidth;
+                    overlayCtx.strokeRect(start[0], start[1], size[0], size[1]);
+                    overlayCtx.font = "20px Arial";
+
+                    if (showLandmarks) {
+                        overlayCtx.fillStyle = 'red';
+                        const landmarksSize = document.getElementById('landmarksSize').value;
+                        for (let j = 0; j < landmarks.length; j++) {
+                            const [x, y] = landmarks[j];
+                            overlayCtx.beginPath();
+                            overlayCtx.arc(x, y, landmarksSize, 0, 2 * Math.PI);
+                            overlayCtx.fill();
+                            overlayCtx.font = "10px Arial";
+                            overlayCtx.fillText(`P${j+1}: (${x.toFixed(2)}, ${y.toFixed(2)})`, x, y - 5);
+                        }
+                    }
+
+                    if (showProbability) {
+                        overlayCtx.fillStyle = 'white';
+                        overlayCtx.fillText(`Probability: ${(probability[0]*100).toFixed(2)}%`, start[0], start[1] > 30 ? start[1] - 25 : start[1] + 35);
+                    }
+
+                    if (showPosition) {
+                        overlayCtx.fillStyle = 'white';
+                        overlayCtx.fillText(`Face ${i + 1}: from (${start[0].toFixed(2)}, ${start[1].toFixed(2)}) to (${end[0].toFixed(2)}, ${end[1].toFixed(2)})`, start[0], start[1] > 20 ? start[1] - 5 : start[1] + 20);
+                    }
+                }
+            } else {
+                message.innerText = 'No faces detected';
+            }
+
+            requestAnimationFrame(() => detectFaces(video));
+        };
+
+        // Handle checkbox change events
+        const handleCheckboxChange = () => {
+            const showLandmarksCheckbox = document.getElementById('showLandmarksCheckbox');
+            const showProbabilityCheckbox = document.getElementById('showProbabilityCheckbox');
+            const showPositionCheckbox = document.getElementById('showPositionCheckbox');
+            showLandmarks = showLandmarksCheckbox.checked;
+            showProbability = showProbabilityCheckbox.checked;
+            showPosition = showPositionCheckbox.checked;
+            const landmarksOptions = document.getElementById('landmarksOptions');
+            if (showLandmarks) {
+                landmarksOptions.style.display = 'block';
+            } else {
+                landmarksOptions.style.display = 'none';
+            }
+        };
+
+        // Handle color by confidence checkbox change event
+        const handleColorByConfidenceChange = () => {
+            const colorByConfidenceCheckbox = document.getElementById('colorByConfidenceCheckbox');
+            colorByConfidence = colorByConfidenceCheckbox.checked;
+        };
+
+        // Main function
+        (async function main() {
+            const video = await initializeCamera();
+            model = await blazeface.load();
+
+            detectFaces(video);
+
+            const showLandmarksCheckbox = document.getElementById('showLandmarksCheckbox');
+            const showProbabilityCheckbox = document.getElementById('showProbabilityCheckbox');
+            const showPositionCheckbox = document.getElementById('showPositionCheckbox');
+            const colorByConfidenceCheckbox = document.getElementById('colorByConfidenceCheckbox');
+            showLandmarksCheckbox.addEventListener('change', handleCheckboxChange);
+            showProbabilityCheckbox.addEventListener('change', handleCheckboxChange);
+            showPositionCheckbox.addEventListener('change', handleCheckboxChange);
+            colorByConfidenceCheckbox.addEventListener('change', handleColorByConfidenceChange);
+        })();
+    </script>
+</body>
+</html>
